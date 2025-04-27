@@ -2,29 +2,202 @@
 <html lang="pl">
 <head>
   <meta charset="UTF-8">
-  <title>NDWI App</title>
+  <title>NDWI App + AI</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest"></script>
+  <style>
+    body {
+      background-color: #0d1b2a;
+      color: white;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      flex-direction: column;
+      min-height: 100vh;
+      margin: 0;
+      font-family: Arial, sans-serif;
+    }
+    .container {
+      background-color: #14532d;
+      padding: 30px;
+      border-radius: 10px;
+      text-align: center;
+      box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+      width: 90%;
+      max-width: 1000px;
+      margin: 20px auto;
+      position: relative;
+    }
+    button {
+      background-color: #1e40af;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      font-size: 16px;
+      cursor: pointer;
+      border-radius: 5px;
+      margin-top: 20px;
+    }
+    button:hover {
+      background-color: #2563eb;
+    }
+    canvas {
+      margin-top: 30px;
+    }
+    .legend {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 20px;
+      margin-top: 20px;
+      margin-bottom: 10px;
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .legend-color {
+      width: 15px;
+      height: 15px;
+      border-radius: 3px;
+    }
+    .legend-green {
+      background-color: lightgreen;
+    }
+    .legend-yellow {
+      background-color: yellow;
+    }
+  </style>
 </head>
 <body>
-  <h1>NDWI jeziora Śniardwy (dane z GEE API)</h1>
+  <div class="container">
+    <h1>NDWI jeziora Śniardwy (z AI predykcją)</h1>
 
-  <h3>Zdjęcie satelitarne (pojedynczy rok)</h3>
-  <img id="obrazek" src="" alt="zdjęcie" width="512"><br><br>
-  <button onclick="pobierzNDWI()">Pobierz dane</button>
+    <button onclick="pobierzNDWI()">Wygeneruj wykres jakości</button>
+    <div id="loadingChart" style="margin-top:20px; display:none;"></div>
 
-  <h3>Wykres NDWI</h3>
-  <canvas id="wykres" width="800" height="400"></canvas>
-
-  <h3>Galeria zdjęć satelitarnych (1990–2024)</h3>
-  <div style="display: flex; align-items: center; gap: 10px;">
-    <button onclick="poprzednieZdjecie()">←</button>
-    <div style="text-align: center;">
-      <img id="galeria-obrazek" src="" alt="galeria" width="512"><br>
-      <span id="galeria-rok">Rok: </span>
+    <div class="legend" id="legend" style="display: none;">
+      <div class="legend-item">
+        <div class="legend-color legend-green"></div> Dane rzeczywiste (1994–2024)
+      </div>
+      <div class="legend-item">
+        <div class="legend-color legend-yellow"></div> Predykcja AI (2025–2044)
+      </div>
     </div>
-    <button onclick="nastepneZdjecie()">→</button>
+
+    <canvas id="wykres" width="800" height="400" style="display:none;"></canvas>
   </div>
 
-  <script src="script.js"></script>
+  <script>
+    async function pobierzNDWI() {
+      const lata = Array.from({length: 2024 - 1994 + 1}, (_, i) => 1994 + i);
+      const ndwiDane = [];
+      const loadingChart = document.getElementById('loadingChart');
+      loadingChart.style.display = 'block';
+      loadingChart.innerText = "Ładowanie wykresu... 0%";
+
+      let loadedYears = 0;
+
+      for (const rok of lata) {
+        try {
+          const res = await fetch(`http://127.0.0.1:5000/ndwi?rok=${rok}`);
+          const data = await res.json();
+          if (data.srednie_ndwi !== null) {
+            ndwiDane.push({rok: data.rok, ndwi: data.srednie_ndwi});
+          }
+        } catch (e) {
+          console.error(`Błąd dla roku ${rok}:`, e);
+        }
+        loadedYears++;
+        loadingChart.innerText = `Ładowanie wykresu... ${Math.round((loadedYears/lata.length)*100)}%`;
+      }
+
+      loadingChart.style.display = 'none';
+      document.getElementById('wykres').style.display = 'block';
+      document.getElementById('legend').style.display = 'flex';
+
+      const inputs = ndwiDane.map(d => (d.rok - 1994) / (2044 - 1994));
+      const outputs = ndwiDane.map(d => (d.ndwi + 1) / 2);
+
+      const xs = tf.tensor2d(inputs, [inputs.length, 1]);
+      const ys = tf.tensor2d(outputs, [outputs.length, 1]);
+
+      const model = tf.sequential();
+      model.add(tf.layers.dense({inputShape: [1], units: 16, activation: 'relu'}));
+      model.add(tf.layers.dense({units: 16, activation: 'relu'}));
+      model.add(tf.layers.dense({units: 1}));
+
+      model.compile({optimizer: 'adam', loss: 'meanSquaredError'});
+      await model.fit(xs, ys, {epochs: 5000});
+
+      const futureYears = Array.from({length: 2044 - 2024 + 1}, (_, i) => 2025 + i);
+      const predInputs = tf.tensor2d(futureYears.map(r => (r - 1994) / (2044 - 1994)), [futureYears.length, 1]);
+      let preds = await model.predict(predInputs).array();
+      let predykcje = preds.map(p => (p[0] * 2 - 1));
+
+      // Dodanie szumu
+      predykcje = predykcje.map(v => v + (Math.random() - 0.5) * 0.06);
+
+      // Wymuszenie spadku jeśli 2 razy pod rząd rośnie
+      for (let i = 2; i < predykcje.length; i++) {
+        if (predykcje[i-2] < predykcje[i-1] && predykcje[i-1] < predykcje[i]) {
+          const wzrost = (predykcje[i-1] - predykcje[i-2]) + (predykcje[i] - predykcje[i-1]);
+          const spadek = wzrost * 0.5;
+          predykcje[i] = predykcje[i-1] - Math.abs(spadek);
+        }
+      }
+
+      // Wygładzenie predykcji
+      function movingAverage(arr, windowSize) {
+        const result = [];
+        for (let i = 0; i < arr.length; i++) {
+          const start = Math.max(0, i - Math.floor(windowSize / 2));
+          const end = Math.min(arr.length, i + Math.floor(windowSize / 2) + 1);
+          const subset = arr.slice(start, end);
+          const avg = subset.reduce((a, b) => a + b, 0) / subset.length;
+          result.push(avg);
+        }
+        return result;
+      }
+
+      predykcje = movingAverage(predykcje, 5);
+
+      const ctx = document.getElementById('wykres').getContext('2d');
+      new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: [...ndwiDane.map(d => d.rok), ...futureYears],
+          datasets: [
+            {
+              label: 'Średnie NDWI',
+              data: ndwiDane.map(d => d.ndwi),
+              borderColor: 'lightgreen',
+              backgroundColor: 'lightgreen',
+              borderWidth: 2,
+              fill: false,
+            },
+            {
+              label: 'Predykcja NDWI (AI)',
+              data: Array(ndwiDane.length).fill(null).concat(predykcje),
+              borderColor: 'yellow',
+              borderDash: [5, 5],
+              borderWidth: 2,
+              fill: false,
+            }
+          ]
+        },
+        options: {
+          scales: {
+            y: {
+              beginAtZero: false
+            }
+          }
+        }
+      });
+    }
+
+    window.onload = () => {}
+  </script>
 </body>
 </html>
