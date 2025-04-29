@@ -8,6 +8,12 @@ ee.Initialize(project='ndwi-mazury-412312')
 app = Flask(__name__)
 CORS(app)
 
+JEZIORA = {
+    "sniardwy": ee.Geometry.Rectangle([21.65, 53.70, 21.85, 53.80]),
+    "niegocin": ee.Geometry.Rectangle([21.73, 54.00, 21.85, 54.10]),
+    "mamry": ee.Geometry.Rectangle([21.70, 54.12, 21.84, 54.25])
+}
+
 def maskLandsatClouds(image):
     qa = image.select('QA_PIXEL')
     cloud = qa.bitwiseAnd(1 << 3).eq(0)
@@ -17,7 +23,8 @@ def maskLandsatClouds(image):
 @app.route('/ndwi')
 def ndwi():
     year = int(request.args.get('rok'))
-    region = ee.Geometry.Rectangle([21.65, 53.70, 21.85, 53.80])
+    jezioro = request.args.get('jezioro', 'sniardwy')
+    region = JEZIORA.get(jezioro, JEZIORA['sniardwy'])
     start = ee.Date.fromYMD(year, 5, 1)
     end = ee.Date.fromYMD(year, 9, 30)
 
@@ -65,7 +72,8 @@ def ndwi():
 @app.route('/obrazek')
 def obrazek():
     year = int(request.args.get('rok'))
-    region = ee.Geometry.Rectangle([21.65, 53.70, 21.85, 53.80])
+    jezioro = request.args.get('jezioro', 'sniardwy')
+    region = JEZIORA.get(jezioro, JEZIORA['sniardwy'])
     start = ee.Date.fromYMD(year, 7, 1)
     end = ee.Date.fromYMD(year, 8, 31)
 
@@ -107,10 +115,7 @@ def obrazek():
             return jsonify({'rok': year, 'url': None})
 
         image = collection.median()
-
-        # Rozjaśnianie delikatne
-        image = image.multiply(1.05)  # Bardzo lekkie (5%)
-
+        image = image.multiply(1.05)
         visualized = image.visualize(**vis_params)
 
         thumb_url = visualized.getThumbURL({

@@ -36,7 +36,7 @@
       font-size: 16px;
       cursor: pointer;
       border-radius: 5px;
-      margin-top: 20px;
+      margin: 10px;
     }
     button:hover {
       background-color: #2563eb;
@@ -68,14 +68,42 @@
     .legend-yellow {
       background-color: yellow;
     }
+    #galeria {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 15px;
+      margin-top: 20px;
+    }
+    .obrazek-container {
+      width: 200px;
+      text-align: center;
+    }
+    .kontrolki-galerii {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 30px;
+      margin-top: 20px;
+    }
   </style>
 </head>
 <body>
   <div class="container">
     <h1>NDWI jeziora Śniardwy (z AI predykcją)</h1>
 
+    <label for="jezioro">Wybierz jezioro:</label>
+    <select id="jezioro">
+      <option value="sniardwy">Śniardwy</option>
+      <option value="niegocin">Niegocin</option>
+      <option value="mamry">Mamry</option>
+    </select>
+
     <button onclick="pobierzNDWI()">Wygeneruj wykres jakości</button>
+    <button onclick="zaladujGalerie()">Wczytaj galerię zdjęć</button>
+
     <div id="loadingChart" style="margin-top:20px; display:none;"></div>
+    <div id="loadingGaleria" style="margin-top:20px; display:none;"></div>
 
     <div class="legend" id="legend" style="display: none;">
       <div class="legend-item">
@@ -87,10 +115,25 @@
     </div>
 
     <canvas id="wykres" width="800" height="400" style="display:none;"></canvas>
+
+    <div class="kontrolki-galerii" id="kontrolkiGalerii" style="display:none;">
+      <button onclick="zmienStroneGalerii(-1)">⬅️</button>
+      <button onclick="zmienStroneGalerii(1)">➡️</button>
+    </div>
+
+    <div id="galeria"></div>
   </div>
 
   <script>
+    let wszystkieZdjecia = [];
+    let aktualnaStrona = 0;
+    const zdjecNaStrone = 4;
+    let ndwiChart = null;
+
     async function pobierzNDWI() {
+      const jezioro = document.getElementById('jezioro').value;
+      document.querySelector("h1").innerText = `NDWI jeziora ${jezioro.charAt(0).toUpperCase() + jezioro.slice(1)} (z AI predykcją)`;
+
       const lata = Array.from({length: 2024 - 1994 + 1}, (_, i) => 1994 + i);
       const ndwiDane = [];
       const loadingChart = document.getElementById('loadingChart');
@@ -101,7 +144,7 @@
 
       for (const rok of lata) {
         try {
-          const res = await fetch(`http://127.0.0.1:5000/ndwi?rok=${rok}`);
+          const res = await fetch(`http://127.0.0.1:5000/ndwi?rok=${rok}&jezioro=${jezioro}`);
           const data = await res.json();
           if (data.srednie_ndwi !== null) {
             ndwiDane.push({rok: data.rok, ndwi: data.srednie_ndwi});
@@ -136,10 +179,8 @@
       let preds = await model.predict(predInputs).array();
       let predykcje = preds.map(p => (p[0] * 2 - 1));
 
-      // Dodanie szumu
       predykcje = predykcje.map(v => v + (Math.random() - 0.5) * 0.06);
 
-      // Wymuszenie spadku jeśli 2 razy pod rząd rośnie
       for (let i = 2; i < predykcje.length; i++) {
         if (predykcje[i-2] < predykcje[i-1] && predykcje[i-1] < predykcje[i]) {
           const wzrost = (predykcje[i-1] - predykcje[i-2]) + (predykcje[i] - predykcje[i-1]);
@@ -148,7 +189,6 @@
         }
       }
 
-      // Wygładzenie predykcji
       function movingAverage(arr, windowSize) {
         const result = [];
         for (let i = 0; i < arr.length; i++) {
@@ -164,7 +204,13 @@
       predykcje = movingAverage(predykcje, 5);
 
       const ctx = document.getElementById('wykres').getContext('2d');
-      new Chart(ctx, {
+
+      // 🔄 ZNISZCZ POPRZEDNI WYKRES JEŚLI ISTNIEJE
+      if (ndwiChart) {
+        ndwiChart.destroy();
+      }
+
+      ndwiChart = new Chart(ctx, {
         type: 'line',
         data: {
           labels: [...ndwiDane.map(d => d.rok), ...futureYears],
@@ -197,7 +243,75 @@
       });
     }
 
-    window.onload = () => {}
+    async function zaladujGalerie() {
+      const galeria = document.getElementById('galeria');
+      const jezioro = document.getElementById('jezioro')?.value || 'sniardwy';
+      const loadingGaleria = document.getElementById('loadingGaleria');
+      galeria.innerHTML = '';
+      loadingGaleria.style.display = 'block';
+      loadingGaleria.innerText = "Ładowanie galerii... 0%";
+
+      wszystkieZdjecia = [];
+      aktualnaStrona = 0;
+
+      let total = 2024 - 1990 + 1;
+      let loaded = 0;
+
+      for (let rok = 1990; rok <= 2024; rok++) {
+        try {
+          const response = await fetch(`http://127.0.0.1:5000/obrazek?rok=${rok}&jezioro=${jezioro}`);
+          const data = await response.json();
+
+          if (data && data.url) {
+            wszystkieZdjecia.push({rok, url: data.url});
+          }
+        } catch (e) {
+          console.error(`Błąd ładowania obrazu dla roku ${rok}`, e);
+        }
+        loaded++;
+        loadingGaleria.innerText = `Ładowanie galerii... ${Math.round((loaded/total)*100)}%`;
+      }
+
+      loadingGaleria.style.display = 'none';
+      document.getElementById('kontrolkiGalerii').style.display = 'flex';
+      pokazStroneGalerii();
+    }
+
+    function pokazStroneGalerii() {
+      const galeria = document.getElementById('galeria');
+      galeria.innerHTML = '';
+      const start = aktualnaStrona * zdjecNaStrone;
+      const end = start + zdjecNaStrone;
+      const widoczne = wszystkieZdjecia.slice(start, end);
+
+      for (const zdj of widoczne) {
+        const div = document.createElement('div');
+        div.classList.add('obrazek-container');
+
+        const img = document.createElement('img');
+        img.src = zdj.url;
+        img.alt = `Zdjęcie z roku ${zdj.rok}`;
+        img.style.width = '100%';
+        img.style.borderRadius = '5px';
+
+        const podpis = document.createElement('div');
+        podpis.innerText = zdj.rok;
+        podpis.style.color = 'white';
+        podpis.style.marginTop = '5px';
+
+        div.appendChild(img);
+        div.appendChild(podpis);
+        galeria.appendChild(div);
+      }
+    }
+
+    function zmienStroneGalerii(kierunek) {
+      const maxStrona = Math.floor((wszystkieZdjecia.length - 1) / zdjecNaStrone);
+      aktualnaStrona += kierunek;
+      if (aktualnaStrona < 0) aktualnaStrona = 0;
+      if (aktualnaStrona > maxStrona) aktualnaStrona = maxStrona;
+      pokazStroneGalerii();
+    }
   </script>
 </body>
 </html>

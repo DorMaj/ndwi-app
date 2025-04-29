@@ -2,9 +2,11 @@ async function zaladujGalerie() {
   const galeria = document.getElementById('galeria');
   galeria.innerHTML = '';
 
+  const jezioro = document.getElementById('jezioro')?.value || 'sniardwy';
+
   for (let rok = 1990; rok <= 2024; rok++) {
     try {
-      const response = await fetch(`http://127.0.0.1:5000/obrazek?rok=${rok}`);
+      const response = await fetch(`http://127.0.0.1:5000/obrazek?rok=${rok}&jezioro=${jezioro}`);
       const data = await response.json();
 
       if (data && data.url) {
